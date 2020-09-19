@@ -65,12 +65,12 @@ if [[ "$CURRENT_PLATFORM" == 'windows' ]]; then
         exit 1
     fi
 elif [[ "$CURRENT_PLATFORM" == 'linux' ]]; then
-    if [[ ("$RUNTIME_ID" != 'linux-x64') && ("$RUNTIME_ID" != 'linux-x86') && ("$RUNTIME_ID" != 'linux-arm64') && ("$RUNTIME_ID" != 'linux-arm') ]]; then
+    if [[ ("$RUNTIME_ID" != 'linux-x64') && ("$RUNTIME_ID" != 'linux-x86') && ("$RUNTIME_ID" != 'linux-arm64') && ("$RUNTIME_ID" != 'linux-arm') && ("$RUNTIME_ID" != 'alpine-x64') ]]; then
        echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
        exit 1
     fi
 elif [[ "$CURRENT_PLATFORM" == 'darwin' ]]; then
-    if [[ ("$RUNTIME_ID" != 'osx-x64') ]]; then
+    if [[ ("$RUNTIME_ID" != 'osx-x64') && ("$RUNTIME_ID" != 'alpine-x64') && ("$RUNTIME_ID" != 'linux-x64') ]]; then
        echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
        exit 1
     fi
@@ -115,7 +115,7 @@ function build ()
 function layout ()
 {
     heading "Create layout ..."
-    dotnet msbuild -t:layout -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:RunnerVersion="${RUNNER_VERSION}" ./dir.proj || failed build
+    dotnet msbuild -t:layout -p:BUILD_OS="Linux" -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:RunnerVersion="${RUNNER_VERSION}" ./dir.proj || failed build
 
     #change execution flag to allow running with sudo
     if [[ ("$CURRENT_PLATFORM" == "linux") || ("$CURRENT_PLATFORM" == "darwin") ]]; then
@@ -127,6 +127,38 @@ function layout ()
 
     heading "Setup externals folder for $RUNTIME_ID runner's layout"
     bash ./Misc/externals.sh $RUNTIME_ID || checkRC externals.sh
+}
+
+#./dev.sh container Release [alpine-x64 | linux-x64]
+function container ()
+{
+    heading "Building container for ${RUNTIME_ID}..."
+
+    if [[ ("${RUNTIME_ID}" != "alpine-x64") && ("${RUNTIME_ID}" != "linux-x64") ]]; then
+        failed "Only support building linux-x64 or alpine-x64 containers"
+    fi
+
+    #BUILDCONFIG="Release"
+    layout 
+
+    echo 
+    echo Building podmgr...
+    pushd $SCRIPT_DIR/podmgr 
+
+    # https://stackoverflow.com/questions/48366173/how-do-i-build-a-static-go-binary-for-the-docker-alpine-image
+    # https://rollout.io/blog/building-minimal-docker-containers-for-go-applications/
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ../../_layout/bin/podmgr .
+    popd > /dev/null
+
+    echo 
+    echo Building container ...
+    pushd "${LAYOUT_DIR}" > /dev/null
+
+    if [ "${RUNTIME_ID}" == "alpine-x64" ]; then
+        docker build -t actions-runner:alpine -f Dockerfile.Alpine .
+    elif [ "${RUNTIME_ID}" == "linux-x64" ]; then
+        docker build -t actions-runner:debian -t actions-runner:slim -f Dockerfile.Debian .
+    fi
 }
 
 function runtest ()
@@ -229,6 +261,8 @@ fi
 case $DEV_CMD in
     "build") build;;
     "b") build;;
+    "container") container;;
+    "c") container;;
     "test") runtest;;
     "t") runtest;;
     "layout") layout;;
